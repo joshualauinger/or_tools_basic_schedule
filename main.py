@@ -51,15 +51,17 @@ def main(schedule_input):
 
     # Setup machine learning model.
     model = cp_model.CpModel()
+    # **i feel like horizon is being calculated wrong.. 'release_date'
     horizon = sum([job.processing_time + job.release_date for job in job_list])
     print("Horizon %d" % horizon) # to remove
     task_type = collections.namedtuple('task_type', 'start end interval') # task type?
     all_tasks = populate_all_tasks(job_list, model, horizon, task_type)
-    intervals = populate_intervals(job_list, all_tasks)
-    model.AddNoOverlap(intervals)
+    model = populate_intervals(job_list, all_tasks, num_of_machines, model)
 
     # Add precedence constraints (into own function?) byRef equiv?
     for job in job_list:
+        # ***** get working
+        #model.Add(all_tasks[job.mach_id, job.job_id].end <= job.due_date)
         for dep in job.dep_on:
             model.Add(all_tasks[job.mach_id, job.job_id].start >=
                       all_tasks[job.mach_id, dep].end)
@@ -86,15 +88,20 @@ def main(schedule_input):
     job_list.sort(key=lambda x: x.start_date, reverse=False)
 
     # Print schedule.
-    print_schedule(job_list, cp_model, solver, status)
+    print_schedule(job_list, cp_model, solver, status, num_of_machines)
 
 
-def print_schedule(job_list, cp_model, solver, status):
-    for job in job_list:
-        temp = ''
-        temp += "Job %d: start %d" % (job.job_id, job.start_date)
-        temp += " (duration %d)" % (job.processing_time)
-        print(temp)
+def print_schedule(job_list, cp_model, solver, status, num_of_machines):
+    for machine in range(num_of_machines):
+        for job in job_list:
+            if (job.mach_id == machine + 1):
+                temp = ''
+                temp += "Job %2d |%2d: start %3d" % (job.job_id,
+                                                     job.mach_id,
+                                                     job.start_date)
+                temp += " (duration %2d)" % (job.processing_time)
+                print(temp)
+        print("")
 
     if status == cp_model.OPTIMAL:
          print('Optimal Schedule Length: %i' % solver.ObjectiveValue())
@@ -107,19 +114,23 @@ def print_schedule(job_list, cp_model, solver, status):
               'because a search limit was reached.')
 
 
-def populate_intervals(job_list, all_tasks):
-    intervals = []
-    for job in job_list:
-        intervals.append(all_tasks[job.mach_id, job.job_id].interval)
+# Add interval blocks that prevent jobs in the same machine overlapping
+def populate_intervals(job_list, all_tasks, num_of_machines, model):
+    for machine in range(num_of_machines):
+        intervals = []
+        for job in job_list: 
+            if (job.mach_id == machine + 1):
+                intervals.append(all_tasks[job.mach_id, job.job_id].interval)
+        # Seperate AddNoOverlap for each machine allows concurrent scheduling
+        model.AddNoOverlap(intervals)
     logging.debug(intervals)
-    return intervals
+    return model
 
 
 def populate_all_tasks(job_list, model, horizon, task_type):
     all_tasks = {}
     for job in job_list:
         start_var = model.NewIntVar(job.release_date, horizon, 'start_%i_%i'
-        #start_var = model.NewIntVar(0, horizon, 'start_%i_%i'
                                     % (job.mach_id,
                                        job.job_id))
         duration_var = job.processing_time
